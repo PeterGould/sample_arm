@@ -1,15 +1,8 @@
 #include "Arduino.h"
 #include <Wire.h>
 #include <sample_arm.h>
-int status;
-int steps,step,step_direction;
-int accel_counter = 0;
-long last_time, lockout_time;
-float angle_lower, angle_upper,delta_upper,delta_lower;
-float lower_array[10];
-float upper_array[10];
-int bufferIndex = 0;
-int rate_lower, rate_upper;
+#include "FS.h"
+
 
 //status values
 //max time = 90 seconds, to protect the arm from struggling too much
@@ -20,6 +13,8 @@ int rate_lower, rate_upper;
 //should be initiated at the beginning of the sketch
 void sample_arm::begin(){
 	Wire.begin(PIN_SDA,PIN_SCL);
+	//file system
+	SPIFFS.begin();
 	last_time = millis();
 	lockout_time = millis();
 	//initialize accelerometers
@@ -27,18 +22,12 @@ void sample_arm::begin(){
 	start_accel(I2C_ADDR_LOWER);
 	//initialize motor drive
 	reset_PWM_driver();
-  //read program here in the future
+  //initialize the program
 	status = 0;
 	step = 0;
-	steps  = 3;
+	steps  = 0;
 	step_direction = 1;
-	program[0].angle_lower = 111.4;
-	program[0].angle_upper = 68.7;
-	program[1].angle_lower = 69.3;
-	program[1].angle_upper = 27.2;
-	program[2].angle_lower = 57.9;
-	program[2].angle_upper = -57;
-
+	if(read_program()) status = 1;
 	//get initial accelerometer reading
 	for(int k = 0; k<10;k++){
 		measure_accel(1);
@@ -115,16 +104,16 @@ void sample_arm::reset_PWM_driver(){
   Wire.write(0x0);
   Wire.write(0xa1);
   Wire.endTransmission();
-  control_motor(0,0); //turn off all motors
+  control_motor(255,0); //turn off all motors
 }
 
 void sample_arm::stop_arm(){
-	control_motor(0,0); //turn off all motors
+	control_motor(255,0); //turn off all motors
 }
 
 
 void sample_arm::control_motor(byte port_number, byte level) {
-  //level = 0 turn all motors off, port_number must also be set zero.
+  //level = 0 turn all motors off, port_number must be 255
   //level = 1 turn motor off
   //level 40 to 100 sets the motor level
 	//set the default levels to turn the motor off
@@ -133,14 +122,15 @@ void sample_arm::control_motor(byte port_number, byte level) {
   byte valve_addr = 0x6;
 	int relevel = int(level);
 	//set the address to turn off all motors
-	if(port_number == 0 && level == 0){
+	if(port_number == 255 && level == 0){
 		valve_addr = 0xFA;
+		port_number = 0;
 	}
 	//don't let the level fall below 40, otherwise the motor will stall
-	if(level > 1 && level < 40) level = 40;
+	if(level > 1 && level < 30) level = 30;
 	if(level > 100) level = 100;
 	//translate the level here
-  if(level >= 40){
+  if(level >= 30){
    on_bytes = 0;
 	 relevel = relevel*4095;
 	 relevel = relevel/100;
@@ -159,6 +149,10 @@ void sample_arm::control_motor(byte port_number, byte level) {
 //calculate direction and rates
 //////////////////////////////////////////////////////////////
 void sample_arm::calc_motor_settings(){
+	//do  nothing if status = 0
+	if(status==0){
+		return(void());
+	}
 	float delta_ratio;
 	//update angle readings
 	update_angles();
@@ -184,46 +178,48 @@ void sample_arm::calc_motor_settings(){
 		delta_upper = program[step].angle_upper - future_upper_angle;
 	}
 	//set speeds so that the arms reach their positions at about the same time
-	delta_ratio = max(1.0,abs(delta_upper))/max(1.0,abs(delta_lower)) * LOWER_DEGREES_PER_SECOND/UPPER_DEGREES_PER_SECOND;
+	delta_ratio = _max(1.0,abs(delta_upper))/_max(1.0,abs(delta_lower)) * LOWER_DEGREES_PER_SECOND/UPPER_DEGREES_PER_SECOND;
 	//if the value > 1 then upper is moving faster, < 1 then lower is faster
 	rate_upper = 100;
 	rate_lower = 100;
 	if(delta_ratio<1){
 		rate_upper = int(delta_ratio*100.0f);
-		if(rate_upper<40) rate_upper = 40; //avoid stalling motors
+		if(rate_upper<30) rate_upper = 30; //avoid stalling motors
 	}else{
 		rate_lower = int(100.0f/delta_ratio);
-		if(rate_lower<40) rate_lower = 40;
+		if(rate_lower<30) rate_lower = 30;
 	}
   //set motor speeds here
 	//if motors within 2 degrees then slow down
-	if(abs(delta_lower)<2.0f && abs(delta_upper)<2.0f){
-		rate_upper = min(40,rate_upper);
-		rate_lower = min(40,rate_lower);
+	if(abs(delta_lower)<5.0f && abs(delta_upper)<5.0f){
+		rate_upper = _min(30,rate_upper);
+		rate_lower = _min(30,rate_lower);
 	}
-	//if within 1 degree then just stop
-	if(abs(delta_upper)< 1.0f) rate_upper = 0;
-	if(abs(delta_lower)<1.0f) rate_lower = 0;
+	//if within 1.5 degree then just stop
+	if(abs(delta_upper)< 1.5f) rate_upper = 0;
+	if(abs(delta_lower)<1.5f) rate_lower = 0;
 	//if both are within a degree then stop
-	if(rate_lower==0 && rate_upper==0){
+	if(abs(rate_lower)<0.1 && abs(rate_upper)<0.1){
+		Serial.println("Adj");
 		step += step_direction;
 		if(step > (steps-1)) step = steps - 1;
 		if(step < 0) step = 0;
 	};
-	if(delta_lower >= 0.0f){
-			control_motor(4,0); //make sure that the other direction is turned off
-			control_motor(5,rate_lower);
-		}else{
-			control_motor(5,0);
-			control_motor(4,rate_lower);
-		}
+
 	if(delta_upper >= 0.0f){
-			control_motor(7,0);
-			control_motor(6,rate_upper);
+			control_motor(MOTOR1_DOWN,0);
+			control_motor(MOTOR1_UP,rate_upper);
 		}else{
-			control_motor(6,0);
-			control_motor(7,rate_upper);
+			control_motor(MOTOR1_UP,0);
+			control_motor(MOTOR1_DOWN,rate_upper);
 	}
+	if(delta_lower >= 0.0f){
+			control_motor(MOTOR2_DOWN,0); //make sure that the other direction is turned off
+			control_motor(MOTOR2_UP,rate_lower);
+		}else{
+			control_motor(MOTOR2_UP,0);
+			control_motor(MOTOR2_DOWN,rate_lower);
+		}
 }
 
 float sample_arm::calculate_actuator_length(){
@@ -242,6 +238,7 @@ float sample_arm::calc_future_upper_angle(float future_lower_angle, float actuat
   return(future_upper_angle);
 }
 
+
 ///interface methods
 String sample_arm::report(char type){
 	String reply = "none";
@@ -251,9 +248,58 @@ String sample_arm::report(char type){
 	}
 	if(type=='r') reply = "upper rate = " + String(rate_upper) + " lower rate = " + String(rate_lower);
 	if(type=='d') reply = "upper delta = " + String(delta_upper) + " lower delta = " + String(delta_lower);
+	if(type=='p') reply = "program upper = " + String(program[step].angle_upper) + "lower = " + String(program[step].angle_lower);
 	if(type=='x'){
 		step_direction = 0 - step_direction;
 		reply = "direction = " + String(step_direction);
 	}
 	return(reply);
+}
+
+void sample_arm::move_to(float lower, float upper){
+	step = 0;
+	steps = 1;
+	program[0].angle_lower = lower;
+	program[0].angle_upper = upper;
+
+}
+
+//read the program and run it
+void sample_arm::run_program(){
+	if(read_program()){
+		status = 1;
+	}
+}
+
+//write a program to the file system
+void sample_arm::write_program(String a_program){
+	File f = SPIFFS.open("/program.txt","w+" );
+	f.print(a_program);
+	f.close();
+}
+
+//read the program from file system
+//-999 indicates the end of the program
+bool sample_arm::read_program(){
+	File f = SPIFFS.open("/program.txt","r");
+	float val1,val2;
+	int current_step = 0;
+	if(f){
+		//currently only reads the angle values
+		while(current_step < 10){
+			val1 = f.parseFloat();
+			if(val1< -998.0f) break;
+			val2 = f.parseFloat();
+			if(val2< -998.0f) break;
+			program[current_step].angle_lower = val1;
+			program[current_step].angle_upper = val2;
+			current_step++;
+			Serial.println(current_step);
+		}
+		steps = current_step;
+		step = 0;
+	 	f.close();
+	 	return(true);
+	}
+	return(false);
 }
