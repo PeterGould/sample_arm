@@ -27,6 +27,8 @@ void sample_arm::begin(){
 	step = 0;
 	steps  = 0;
 	step_direction = 1;
+	last_progress_time = -1; //milliseconds since last making progress on targets
+	last_delta = 360.0f;
 	if(read_program()) status = 1;
 	//get initial accelerometer reading
 	for(int k = 0; k<10;k++){
@@ -127,10 +129,10 @@ void sample_arm::control_motor(byte port_number, byte level) {
 		port_number = 0;
 	}
 	//don't let the level fall below 40, otherwise the motor will stall
-	if(level > 1 && level < 30) level = 30;
+	if(level > 1 && level < MIN_MOTOR_SPEED) level = MIN_MOTOR_SPEED;
 	if(level > 100) level = 100;
 	//translate the level here
-  if(level >= 30){
+  if(level >= MIN_MOTOR_SPEED){
    on_bytes = 0;
 	 relevel = relevel*4095;
 	 relevel = relevel/100;
@@ -167,7 +169,6 @@ void sample_arm::calc_motor_settings(){
 		stop_arm();
 		return(void());
 	}
-
 	//if moving lower arm more than 5 degrees, then estimate effect on upper arm
 	//estimate current actuator length
 	if(delta_lower>5.0f){
@@ -184,26 +185,39 @@ void sample_arm::calc_motor_settings(){
 	rate_lower = 100;
 	if(delta_ratio<1){
 		rate_upper = int(delta_ratio*100.0f);
-		if(rate_upper<30) rate_upper = 30; //avoid stalling motors
+		if(rate_upper<MIN_MOTOR_SPEED) rate_upper = MIN_MOTOR_SPEED; //avoid stalling motors
 	}else{
 		rate_lower = int(100.0f/delta_ratio);
-		if(rate_lower<30) rate_lower = 30;
+		if(rate_lower<MIN_MOTOR_SPEED) rate_lower = MIN_MOTOR_SPEED;
 	}
   //set motor speeds here
 	//if motors within 2 degrees then slow down
 	if(abs(delta_lower)<5.0f && abs(delta_upper)<5.0f){
-		rate_upper = _min(30,rate_upper);
-		rate_lower = _min(30,rate_lower);
+		rate_upper = _min(MIN_MOTOR_SPEED,rate_upper);
+		rate_lower = _min(MIN_MOTOR_SPEED,rate_lower);
+	}
+	//test to make sure the arm's making progress.
+	//this is made more complex to accomodate noise.
+	float current_delta = _max(abs(delta_lower),abs(delta_upper));
+	if(current_delta < last_delta || last_progress_time < 0){
+		last_progress_time = millis(); //making progress
+		last_delta = current_delta;
+	}
+	//if no progress is being made then move on
+	if(millis() - last_progress_time > MAX_NO_PROGRESS){
+		rate_lower = 0;
+		rate_upper = 0;
 	}
 	//if within 1.5 degree then just stop
 	if(abs(delta_upper)< 1.5f) rate_upper = 0;
 	if(abs(delta_lower)<1.5f) rate_lower = 0;
-	//if both are within a degree then stop
 	if(abs(rate_lower)<0.1 && abs(rate_upper)<0.1){
-		Serial.println("Adj");
+		int old_step = step; //used to determine whether a step change took place
 		step += step_direction;
 		if(step > (steps-1)) step = steps - 1;
 		if(step < 0) step = 0;
+		//if a step change takes place then reset progress counters
+		if(step != old_step) reset_progress();
 	};
 
 	if(delta_upper >= 0.0f){
@@ -238,6 +252,10 @@ float sample_arm::calc_future_upper_angle(float future_lower_angle, float actuat
   return(future_upper_angle);
 }
 
+void sample_arm::reset_progress(){
+	last_progress_time = millis();
+	last_delta = 360.0f;
+}
 
 ///interface methods
 String sample_arm::report(char type){
@@ -253,6 +271,7 @@ String sample_arm::report(char type){
 		step_direction = 0 - step_direction;
 		reply = "direction = " + String(step_direction);
 	}
+	if(type == 'l') reply = "progress lapse = " + String(millis()-last_progress_time);
 	return(reply);
 }
 
@@ -261,6 +280,7 @@ void sample_arm::move_to(float lower, float upper){
 	steps = 1;
 	program[0].angle_lower = lower;
 	program[0].angle_upper = upper;
+	reset_progress(); //reset the clock to make progress
 
 }
 
@@ -268,6 +288,7 @@ void sample_arm::move_to(float lower, float upper){
 void sample_arm::run_program(){
 	if(read_program()){
 		status = 1;
+		reset_progress();
 	}
 }
 
