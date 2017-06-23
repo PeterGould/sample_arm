@@ -15,6 +15,7 @@ void sample_arm::begin(){
 	Wire.begin(PIN_SDA,PIN_SCL);
 	//file system
 	SPIFFS.begin();
+	//setup time-dependent variables
 	last_time = millis();
 	lockout_time = millis();
 	//initialize accelerometers
@@ -208,6 +209,9 @@ void sample_arm::calc_motor_settings(){
 		rate_lower = 0;
 		rate_upper = 0;
 	}
+	//if the arm is extended then the lower motor needs a higher cut-off
+	//to accomodate leverage
+	if(angle_lower > 50 && rate_lower < MIN_MOTOR_SPEED_EXTENDED) rate_lower = MIN_MOTOR_SPEED_EXTENDED;
 	//if within 1.5 degree then just stop
 	if(abs(delta_upper)< 1.5f) rate_upper = 0;
 	if(abs(delta_lower)<1.5f) rate_lower = 0;
@@ -284,6 +288,9 @@ void sample_arm::move_to(float lower, float upper){
 
 }
 
+//////////////////////////////////////////////////////////////////////////
+//File system methods
+////////////////////////////////////////////////////////////////////////
 //read the program and run it
 void sample_arm::run_program(){
 	if(read_program()){
@@ -291,7 +298,24 @@ void sample_arm::run_program(){
 		reset_progress();
 	}
 }
+//set and get sample arm name
+String sample_arm::get_name(){
+	String name = "OCSampler";
+	File f = SPIFFS.open("/name.txt","r");
+	if(f){
+		name = f.readStringUntil('\n');
+		f.close();
+	}
+	return(name);
+}
 
+void sample_arm::set_name(String new_name){
+	File f = SPIFFS.open("/name.txt","w+");
+	if(f){
+		f.print(new_name);
+		f.close();
+	}
+}
 //write a program to the file system
 void sample_arm::write_program(String a_program){
 	File f = SPIFFS.open("/program.txt","w+" );

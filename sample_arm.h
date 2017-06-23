@@ -7,7 +7,10 @@
 #define I2C_ADDR_UPPER   0x69
 #define I2C_ADDR_PWM_DRIVER   0x40
 #define MAX_NO_PROGRESS 2000
-#define MIN_MOTOR_SPEED 50
+//minimum motor speed to avoid stalling
+#define MIN_MOTOR_SPEED 30
+//lower segment needs more motor when extended
+#define MIN_MOTOR_SPEED_EXTENDED 50
 //motor ports
 #define MOTOR1_UP 0
 #define MOTOR1_DOWN 1
@@ -43,6 +46,8 @@ class sample_arm
 		float upper_array[10];
 		int bufferIndex = 0;
 		int rate_lower, rate_upper;
+		String unit_name;
+
 		/**
        * Initializes an instance of the SODA class. Should be called in each sketch before any other SODA functions.
        */
@@ -70,6 +75,10 @@ class sample_arm
 
 		void reset_progress();
 
+		String get_name();
+
+		void set_name(String new_name);
+
 		void write_program(String a_program);
 
 		bool read_program();
@@ -79,5 +88,6 @@ class sample_arm
 		String report(char type);
 
 		void move_to(float lower, float upper);
+
 
 	};
