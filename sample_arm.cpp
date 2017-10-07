@@ -75,7 +75,7 @@ void sample_arm::measure_accel(int segment){
   int yAng = map(AcY,minVal,maxVal,-90,90);
   int zAng = map(AcZ,minVal,maxVal,-90,90);
   if(segment==1){
-     lower_array[accel_counter/2]= RAD_TO_DEG * (atan2(-xAng, -zAng)+PI) - 180;
+     lower_array[accel_counter/2]= 180 - RAD_TO_DEG * (atan2(-xAng, -zAng)+PI);
   }else{
      upper_array[accel_counter/2]= 180 - RAD_TO_DEG * (atan2(-xAng, -zAng)+PI);
   }
