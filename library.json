@@ -1,0 +1,13 @@
+{
+  "name": "sample_arm",
+  "keywords": "robotics,accelerometer,science,research",
+  "description": "Arduino Library for controlling Olympia Circuits gas sampler arm",
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/milesburton/Arduino-Temperature-Control-Library.git"
+  },
+  "version": "1",
+  "frameworks": "arduino",
+  "platforms": "*"
+}
